@@ -82,18 +82,6 @@ Plugins:
 Total: 3 component(s) detected
 ```
 
-## Securify Integration
-
-```
-Securify ASM → WP site detection
-        ↓
-WP-CLI or Remote detection
-        ↓
-WpVet → CPE output
-        ↓
-Securify CVEDB correlation
-```
-
 ## Accuracy Comparison
 
 | Method | Accuracy | Requirements |
