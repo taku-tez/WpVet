@@ -1,0 +1,38 @@
+{
+  "name": "wpvet",
+  "version": "0.1.0",
+  "description": "WordPress plugin/theme security scanner with CPE output for vulnerability correlation",
+  "main": "dist/index.js",
+  "bin": {
+    "wpvet": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test dist/**/*.test.js",
+    "prepublishOnly": "npm run build && npm test",
+    "dev": "tsc --watch"
+  },
+  "keywords": [
+    "wordpress",
+    "security",
+    "cpe",
+    "vulnerability",
+    "scanner",
+    "wp-cli",
+    "plugin",
+    "theme"
+  ],
+  "author": "taku-tez",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/taku-tez/WpVet.git"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.0"
+  }
+}
