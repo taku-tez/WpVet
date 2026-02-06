@@ -25,10 +25,12 @@ export function parsePluginList(json: unknown[]): WpPlugin[] {
     
     const obj = item as Record<string, unknown>;
     
+    const version = typeof obj.version === 'string' ? obj.version.trim() : obj.version;
+
     return {
       name: String(obj.name || obj.slug || 'unknown'),
       slug: String(obj.name || obj.slug || 'unknown'),
-      version: String(obj.version || 'unknown'),
+      version: version ? String(version) : 'unknown',
       status: (obj.status as WpPlugin['status']) || 'inactive',
       update: obj.update === 'available' ? 'available' : 'none',
       auto_update: obj.auto_update === 'on' ? 'on' : 'off',
@@ -54,10 +56,12 @@ export function parseThemeList(json: unknown[]): WpTheme[] {
     
     const obj = item as Record<string, unknown>;
     
+    const version = typeof obj.version === 'string' ? obj.version.trim() : obj.version;
+
     return {
       name: String(obj.name || obj.slug || 'unknown'),
       slug: String(obj.stylesheet || obj.name || 'unknown'),
-      version: String(obj.version || 'unknown'),
+      version: version ? String(version) : 'unknown',
       status: (obj.status as WpTheme['status']) || 'inactive',
       update: obj.update === 'available' ? 'available' : 'none',
       title: obj.title ? String(obj.title) : undefined,
