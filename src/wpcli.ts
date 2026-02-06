@@ -111,8 +111,18 @@ export function parseWpCliInput(input: string): WpCliInput {
   
   // Handle different input formats
   if (Array.isArray(parsed)) {
-    // Assume plugins by default
-    return { plugins: parsePluginList(parsed), themes: [] };
+    if (parsed.length === 0) {
+      return { plugins: [], themes: [] };
+    }
+
+    const firstItem = parsed[0];
+    const isThemeList = typeof firstItem === 'object'
+      && firstItem !== null
+      && 'stylesheet' in (firstItem as Record<string, unknown>);
+
+    return isThemeList
+      ? { plugins: [], themes: parseThemeList(parsed) }
+      : { plugins: parsePluginList(parsed), themes: [] };
   }
   
   if (typeof parsed === 'object' && parsed !== null) {
