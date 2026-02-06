@@ -4,7 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { parseSshUrl } from './ssh.js';
+import { buildSshTarget, parseSshUrl } from './ssh.js';
 
 test('parseSshUrl', async (t) => {
   await t.test('parses full SSH URL', () => {
@@ -44,5 +44,19 @@ test('parseSshUrl', async (t) => {
   await t.test('throws on invalid URL', () => {
     assert.throws(() => parseSshUrl('https://example.com'), /Invalid SSH URL/);
     assert.throws(() => parseSshUrl('invalid'), /Invalid SSH URL/);
+  });
+});
+
+test('buildSshTarget', async (t) => {
+  await t.test('includes port in target when provided', () => {
+    const target = buildSshTarget(
+      {
+        user: 'deploy',
+        host: 'example.com',
+        port: 2222,
+      },
+      '/var/www/wordpress'
+    );
+    assert.strictEqual(target, 'ssh://deploy@example.com:2222/var/www/wordpress');
   });
 });
