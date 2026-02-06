@@ -121,10 +121,30 @@ export async function scanViaSsh(
     const themeJson = await sshExec(config, themeCmd, options.timeout);
     
     // Combine into WP-CLI format
+    let plugins: unknown[] = [];
+    try {
+      plugins = JSON.parse(pluginJson || '[]');
+    } catch (error) {
+      result.errors.push(
+        `plugin JSON parse failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+      plugins = [];
+    }
+
+    let themes: unknown[] = [];
+    try {
+      themes = JSON.parse(themeJson || '[]');
+    } catch (error) {
+      result.errors.push(
+        `theme JSON parse failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+      themes = [];
+    }
+
     const combined = {
       core: { version: coreVersion },
-      plugins: JSON.parse(pluginJson || '[]'),
-      themes: JSON.parse(themeJson || '[]'),
+      plugins,
+      themes,
     };
     
     const parsed = wpcliToDetectionResult(combined, result.target);
