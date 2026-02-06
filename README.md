@@ -17,6 +17,24 @@ npm install -g wpvet
 
 ## Usage
 
+### SSH + WP-CLI (Recommended - 100% Accuracy)
+
+Scan remote WordPress sites via SSH:
+
+```bash
+# Basic SSH scan
+wpvet scan ssh://user@example.com/var/www/wordpress
+
+# With SSH key
+wpvet scan ssh://deploy@server.com/home/deploy/wp -k ~/.ssh/id_rsa
+
+# Custom port
+wpvet scan ssh://root@example.com:2222/var/www/html
+
+# CPE output
+wpvet scan ssh://user@host/path --format cpe
+```
+
 ### WP-CLI Integration (Recommended)
 
 On your WordPress server:
