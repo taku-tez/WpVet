@@ -119,8 +119,8 @@ export async function detectPlugin(
   
   const text = await response.text();
   const version = extractVersion(text, [
-    /Stable tag:\s*([\d.]+)/i,
-    /Version:\s*([\d.]+)/i,
+    /Stable tag:\s*([0-9]+(?:\.[0-9]+){0,2}(?:[-+][0-9A-Za-z.-]+)?)/i,
+    /Version:\s*([0-9]+(?:\.[0-9]+){0,2}(?:[-+][0-9A-Za-z.-]+)?)/i,
   ]);
   
   if (version) {
@@ -150,7 +150,7 @@ export async function detectTheme(
   
   const text = await response.text();
   const version = extractVersion(text, [
-    /Version:\s*([\d.]+)/i,
+    /Version:\s*([0-9]+(?:\.[0-9]+){0,2}(?:[-+][0-9A-Za-z.-]+)?)/i,
   ]);
   
   if (version) {
