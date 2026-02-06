@@ -87,12 +87,29 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  const formatValue = (values.format ?? 'table').toString();
+  const validFormats = ['cpe', 'json', 'table'];
+  if (!validFormats.includes(formatValue)) {
+    console.error(`Error: Invalid format "${formatValue}".`);
+    console.error('Run "wpvet --help" for usage.');
+    console.error(HELP);
+    process.exit(1);
+  }
+
+  const timeoutValue = Number(values.timeout ?? '30000');
+  if (!Number.isFinite(timeoutValue) || timeoutValue <= 0) {
+    console.error('Error: Invalid timeout value.');
+    console.error('Run "wpvet --help" for usage.');
+    console.error(HELP);
+    process.exit(1);
+  }
+
   const command = positionals[0];
 
   const options: ScanOptions = {
     ...DEFAULT_OPTIONS,
-    format: (values.format as 'cpe' | 'json' | 'table') || 'table',
-    timeout: parseInt(values.timeout || '30000', 10),
+    format: formatValue as 'cpe' | 'json' | 'table',
+    timeout: timeoutValue,
     verbose: values.verbose || false,
     stdin: values.stdin || false,
   };
