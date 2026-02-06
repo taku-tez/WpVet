@@ -78,7 +78,6 @@ async function sshExec(
     args.push(command);
     
     const proc = spawn('ssh', args, {
-      timeout,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     
@@ -88,15 +87,39 @@ async function sshExec(
     proc.stdout.on('data', (data) => { stdout += data; });
     proc.stderr.on('data', (data) => { stderr += data; });
     
+    let settled = false;
+    const timeoutId = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      proc.kill();
+      reject(new Error(`SSH command timed out after ${timeout}`));
+    }, timeout);
+
+    const clearTimer = () => {
+      clearTimeout(timeoutId);
+    };
+
     proc.on('close', (code) => {
+      clearTimer();
+      if (settled) {
+        return;
+      }
+      settled = true;
       if (code === 0) {
         resolve(stdout);
       } else {
         reject(new Error(`SSH command failed (exit ${code}): ${stderr || stdout}`));
       }
     });
-    
+
     proc.on('error', (err) => {
+      clearTimer();
+      if (settled) {
+        return;
+      }
+      settled = true;
       reject(new Error(`SSH error: ${err.message}`));
     });
   });
