@@ -12,7 +12,13 @@ export interface SshConfig {
   port?: number;
   keyPath?: string;
   wpPath?: string;  // WordPress installation path
+  wpPathEscaped?: string;
   wpCli?: string;   // WP-CLI binary path (default: wp)
+  wpCliEscaped?: string;
+}
+
+function escapeShellArg(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 /**
@@ -23,12 +29,14 @@ export function parseSshUrl(url: string): SshConfig {
   if (!match) {
     throw new Error(`Invalid SSH URL: ${url}`);
   }
-  
+
+  const wpPath = match[4] || '/var/www/html';
   return {
     user: match[1],
     host: match[2],
     port: match[3] ? parseInt(match[3], 10) : undefined,
-    wpPath: match[4] || '/var/www/html',
+    wpPath,
+    wpPathEscaped: escapeShellArg(wpPath),
   };
 }
 
@@ -97,6 +105,8 @@ export async function scanViaSsh(
 ): Promise<DetectionResult> {
   const wpCli = config.wpCli || 'wp';
   const wpPath = config.wpPath || '/var/www/html';
+  const escapedWpCli = config.wpCliEscaped ?? escapeShellArg(wpCli);
+  const escapedWpPath = config.wpPathEscaped ?? escapeShellArg(wpPath);
   
   const result: DetectionResult = {
     target: `ssh://${config.user ? config.user + '@' : ''}${config.host}${wpPath}`,
@@ -109,15 +119,15 @@ export async function scanViaSsh(
   
   try {
     // Get core version
-    const coreCmd = `cd ${wpPath} && ${wpCli} core version 2>/dev/null`;
+    const coreCmd = `cd ${escapedWpPath} && ${escapedWpCli} core version 2>/dev/null`;
     const coreVersion = (await sshExec(config, coreCmd, options.timeout)).trim();
     
     // Get plugins
-    const pluginCmd = `cd ${wpPath} && ${wpCli} plugin list --format=json 2>/dev/null`;
+    const pluginCmd = `cd ${escapedWpPath} && ${escapedWpCli} plugin list --format=json 2>/dev/null`;
     const pluginJson = await sshExec(config, pluginCmd, options.timeout);
     
     // Get themes
-    const themeCmd = `cd ${wpPath} && ${wpCli} theme list --format=json 2>/dev/null`;
+    const themeCmd = `cd ${escapedWpPath} && ${escapedWpCli} theme list --format=json 2>/dev/null`;
     const themeJson = await sshExec(config, themeCmd, options.timeout);
     
     // Combine into WP-CLI format
