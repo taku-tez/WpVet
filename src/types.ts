@@ -2,6 +2,8 @@
  * WpVet type definitions
  */
 
+import { USER_AGENT } from './version.js';
+
 export interface WpPlugin {
   name: string;
   slug: string;
@@ -70,6 +72,6 @@ export const DEFAULT_OPTIONS: ScanOptions = {
   format: 'table',
   stdin: false,
   timeout: 30000,
-  userAgent: 'WpVet/0.1.0 (Security Scanner)',
+  userAgent: USER_AGENT,
   verbose: false,
 };
