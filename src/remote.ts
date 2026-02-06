@@ -172,10 +172,15 @@ export async function scanRemote(
   url: string,
   options: ScanOptions
 ): Promise<DetectionResult> {
-  const normalizedUrl = /^https?:\/\//i.test(url) ? url : `https://${url}`;
-  const baseUrl = normalizedUrl.replace(/\/$/, '');
+  const hasScheme = /^https?:\/\//i.test(url);
+  const host = url.replace(/^https?:\/\//i, '').replace(/\/$/, '');
+  const httpsBaseUrl = `https://${host}`;
+  const httpBaseUrl = `http://${host}`;
+  const primaryBaseUrl = hasScheme && /^http:\/\//i.test(url) ? httpBaseUrl : httpsBaseUrl;
+  const fallbackBaseUrl = primaryBaseUrl === httpsBaseUrl ? httpBaseUrl : null;
+  let activeBaseUrl = primaryBaseUrl;
   const result: DetectionResult = {
-    target: normalizedUrl,
+    target: primaryBaseUrl,
     timestamp: new Date().toISOString(),
     source: 'remote',
     plugins: [],
@@ -185,26 +190,41 @@ export async function scanRemote(
   
   // Detect core
   try {
-    result.core = await detectWordPressCore(baseUrl, options) ?? undefined;
-    if (!result.core) {
-      result.errors.push('WordPress not detected at this URL');
-      return result;
-    }
+    result.core = await detectWordPressCore(primaryBaseUrl, options) ?? undefined;
   } catch (e) {
     result.errors.push(`Core detection failed: ${e}`);
+  }
+
+  if (!result.core && fallbackBaseUrl) {
+    result.errors = result.errors.filter(message => !message.startsWith('Core detection failed:'));
+    try {
+      result.core = await detectWordPressCore(fallbackBaseUrl, options) ?? undefined;
+      if (result.core) {
+        activeBaseUrl = fallbackBaseUrl;
+        result.target = activeBaseUrl;
+      }
+    } catch (e) {
+      result.errors.push(`Core detection failed: ${e}`);
+    }
+  }
+
+  if (!result.core) {
+    if (result.errors.length === 0) {
+      result.errors.push('WordPress not detected at this URL');
+    }
     return result;
   }
   
   // Scan common plugins (parallel, limited concurrency)
   const pluginPromises = COMMON_PLUGINS.map(slug =>
-    detectPlugin(baseUrl, slug, options).catch(() => null)
+    detectPlugin(activeBaseUrl, slug, options).catch(() => null)
   );
   const pluginResults = await Promise.all(pluginPromises);
   result.plugins = pluginResults.filter((p): p is DetectedComponent => p !== null);
   
   // Scan common themes
   const themePromises = COMMON_THEMES.map(slug =>
-    detectTheme(baseUrl, slug, options).catch(() => null)
+    detectTheme(activeBaseUrl, slug, options).catch(() => null)
   );
   const themeResults = await Promise.all(themePromises);
   result.themes = themeResults.filter((t): t is DetectedComponent => t !== null);
