@@ -120,7 +120,11 @@ export async function scanViaSsh(
   try {
     // Get core version
     const coreCmd = `cd ${escapedWpPath} && ${escapedWpCli} core version 2>/dev/null`;
-    const coreVersion = (await sshExec(config, coreCmd, options.timeout)).trim();
+    let coreVersion = (await sshExec(config, coreCmd, options.timeout)).trim();
+    if (!coreVersion) {
+      result.errors.push('core version missing from wp core version output');
+      coreVersion = 'unknown';
+    }
     
     // Get plugins
     const pluginCmd = `cd ${escapedWpPath} && ${escapedWpCli} plugin list --format=json 2>/dev/null`;
