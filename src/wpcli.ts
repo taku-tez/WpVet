@@ -56,7 +56,7 @@ export function parseThemeList(json: unknown[]): WpTheme[] {
     
     return {
       name: String(obj.name || obj.slug || 'unknown'),
-      slug: String(obj.name || obj.slug || 'unknown'),
+      slug: String(obj.stylesheet || obj.name || 'unknown'),
       version: String(obj.version || 'unknown'),
       status: (obj.status as WpTheme['status']) || 'inactive',
       update: obj.update === 'available' ? 'available' : 'none',
