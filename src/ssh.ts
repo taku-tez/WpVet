@@ -21,6 +21,12 @@ function escapeShellArg(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+export function buildSshTarget(config: SshConfig, wpPath: string): string {
+  const userPart = config.user ? `${config.user}@` : '';
+  const portPart = config.port ? `:${config.port}` : '';
+  return `ssh://${userPart}${config.host}${portPart}${wpPath}`;
+}
+
 /**
  * Parse SSH URL: ssh://user@host:port/path
  */
@@ -109,7 +115,7 @@ export async function scanViaSsh(
   const escapedWpPath = config.wpPathEscaped ?? escapeShellArg(wpPath);
   
   const result: DetectionResult = {
-    target: `ssh://${config.user ? config.user + '@' : ''}${config.host}${wpPath}`,
+    target: buildSshTarget(config, wpPath),
     timestamp: new Date().toISOString(),
     source: 'wp-cli',
     plugins: [],
