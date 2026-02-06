@@ -100,6 +100,27 @@ export function parseWpCliInput(input: string): WpCliInput {
               results.plugins = parsePluginList(obj);
             }
           }
+        } else if (typeof obj === 'object' && obj !== null) {
+          const record = obj as Record<string, unknown>;
+          if (record.core && typeof record.core === 'object') {
+            const core = record.core as Record<string, unknown>;
+            results.core = {
+              version: String(core.version || 'unknown'),
+              site_url: core.site_url as string | undefined,
+            };
+          }
+          if (record.plugins) {
+            const parsedPlugins = parsePluginList(record.plugins as unknown[]);
+            results.plugins = results.plugins.length
+              ? results.plugins.concat(parsedPlugins)
+              : parsedPlugins;
+          }
+          if (record.themes) {
+            const parsedThemes = parseThemeList(record.themes as unknown[]);
+            results.themes = results.themes.length
+              ? results.themes.concat(parsedThemes)
+              : parsedThemes;
+          }
         }
       } catch {
         // Skip invalid lines
