@@ -95,10 +95,36 @@ export function parseWpCliInput(input: string): WpCliInput {
           if (obj[0]?.status === 'active' || obj[0]?.status === 'inactive') {
             // Could be either, check for theme-specific fields
             if (obj[0]?.stylesheet) {
-              results.themes = parseThemeList(obj);
+              const parsedThemes = parseThemeList(obj);
+              results.themes = results.themes.length
+                ? [...results.themes, ...parsedThemes]
+                : parsedThemes;
             } else {
-              results.plugins = parsePluginList(obj);
+              const parsedPlugins = parsePluginList(obj);
+              results.plugins = results.plugins.length
+                ? [...results.plugins, ...parsedPlugins]
+                : parsedPlugins;
             }
+          }
+        } else if (obj && typeof obj === 'object') {
+          const record = obj as Record<string, unknown>;
+          if (record.core && typeof record.core === 'object') {
+            results.core = {
+              version: String((record.core as Record<string, unknown>).version || 'unknown'),
+              site_url: (record.core as Record<string, unknown>).site_url as string | undefined,
+            };
+          }
+          if (Array.isArray(record.plugins)) {
+            const parsedPlugins = parsePluginList(record.plugins);
+            results.plugins = results.plugins.length
+              ? [...results.plugins, ...parsedPlugins]
+              : parsedPlugins;
+          }
+          if (Array.isArray(record.themes)) {
+            const parsedThemes = parseThemeList(record.themes);
+            results.themes = results.themes.length
+              ? [...results.themes, ...parsedThemes]
+              : parsedThemes;
           }
         }
       } catch {
