@@ -172,9 +172,10 @@ export async function scanRemote(
   url: string,
   options: ScanOptions
 ): Promise<DetectionResult> {
-  const baseUrl = url.replace(/\/$/, '');
+  const normalizedUrl = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+  const baseUrl = normalizedUrl.replace(/\/$/, '');
   const result: DetectionResult = {
-    target: url,
+    target: normalizedUrl,
     timestamp: new Date().toISOString(),
     source: 'remote',
     plugins: [],
