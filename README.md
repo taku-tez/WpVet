@@ -1,4 +1,4 @@
-# WpVet v0.3.0
+# WpVet v0.4.0
 
 WordPress plugin/theme security scanner with CPE output for vulnerability correlation.
 
@@ -11,6 +11,7 @@ WordPress plugin/theme security scanner with CPE output for vulnerability correl
 - **Multiple Output Formats**: CPE, JSON, table
 - **Configurable**: Custom plugin/theme lists via config file
 - **Concurrent Scanning**: Configurable concurrency with retry support
+- **JS Fingerprint Detection** (v0.4.0): Detect WordPress version when meta generator is hidden
 
 ## Installation
 
@@ -98,6 +99,8 @@ OPTIONS:
   --retry <n>              Retry count for failed requests (default: 2)
   --targets <file>         File with target URLs (one per line)
   --config <path>          Path to config file (default: ~/.wpvet/config.json)
+  --fingerprint            Enable JS fingerprint detection (default: on)
+  --no-fingerprint         Disable JS fingerprint for faster scans
   -v, --verbose            Verbose output
   -h, --help               Show help
   --version                Show version
@@ -201,7 +204,12 @@ Version extraction from multiple sources:
 - WordPress REST API /wp-json/ (confidence: 70%)
 - readme.html version parsing (confidence: 85%)
 - Script/style ?ver= parameter extraction (confidence: 80%)
+- **JS fingerprint detection (confidence: 75%)** [v0.4.0]
+  - SHA-256 hash matching of wp-includes/js/* files
+  - Version comment extraction from JS headers
+  - Works when meta generator is hidden
 - /wp-content/plugins/\<slug\>/readme.txt probing
+- /wp-content/plugins/\<slug\>/*.js version extraction
 - /wp-content/themes/\<slug\>/style.css probing
 - HTML parsing for plugin/theme path discovery
 

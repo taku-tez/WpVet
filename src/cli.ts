@@ -1,23 +1,26 @@
 #!/usr/bin/env node
 /**
- * WpVet CLI - WordPress Security Scanner - v0.3.0
+ * WpVet CLI - WordPress Security Scanner - v0.4.0
  * 
  * Enhanced with:
  * - New CLI options (--user-agent, --concurrency, --targets, --retry, --config)
  * - Meaningful exit codes
  * - Extended help with detection methods and exit codes
+ * - JS fingerprint detection for hidden meta generator
  */
 
 import { parseArgs } from 'node:util';
 import { readFileSync, existsSync } from 'node:fs';
-import { DEFAULT_OPTIONS, EXIT_SUCCESS, EXIT_NOT_DETECTED, EXIT_ERROR, type ScanOptions } from './types.js';
+import { DEFAULT_OPTIONS, EXIT_SUCCESS, EXIT_NOT_DETECTED, EXIT_ERROR, type ScanOptions, type AuditResult } from './types.js';
 import { parseWpCliInput, wpcliToDetectionResult, parseAndConvert } from './wpcli.js';
 import { scanRemote } from './remote.js';
 import { parseSshUrl, scanViaSsh } from './ssh.js';
-import { format } from './output.js';
+import { format, formatAudit } from './output.js';
 import { initConfig } from './config.js';
+import { runMisconfigChecks, runAudit } from './misconfig.js';
+import { runAllPluginVulnChecks, runPluginVulnChecks } from './plugin-vulns.js';
 
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 
 const HELP = `
 wpvet v${VERSION} - WordPress plugin/theme security scanner with CPE output
@@ -25,6 +28,8 @@ wpvet v${VERSION} - WordPress plugin/theme security scanner with CPE output
 USAGE:
   wpvet detect <url>              Scan a WordPress site remotely
   wpvet detect --stdin            Parse WP-CLI JSON from stdin
+  wpvet detect <url> --audit      Scan + security audit
+  wpvet audit <url>               Security audit only (misconfigs, plugin vulns)
   wpvet scan <ssh-url>            Scan via SSH + WP-CLI (100% accuracy)
   wpvet init                      Initialize config file (~/.wpvet/config.json)
 
@@ -38,6 +43,9 @@ OPTIONS:
   --retry <n>              Retry count for failed requests (default: 2)
   --targets <file>         File with target URLs (one per line)
   --config <path>          Path to config file (default: ~/.wpvet/config.json)
+  --fingerprint            Enable JS fingerprint detection (default: on)
+  --no-fingerprint         Disable JS fingerprint detection (faster scans)
+  --audit                  Include security audit (misconfigs, plugin vulns)
   -v, --verbose            Verbose output
   -h, --help               Show this help
   --version                Show version
@@ -62,6 +70,15 @@ EXAMPLES:
   # WP-CLI stdin integration
   wp plugin list --format=json | wpvet detect --stdin --format cpe
 
+  # Security audit (check for misconfigurations)
+  wpvet audit https://example.com
+
+  # Combined detection + audit
+  wpvet detect https://example.com --audit
+
+  # Audit with JSON output
+  wpvet audit https://example.com --format json
+
 OUTPUT FORMATS:
   cpe     One CPE per line (for vulnerability DB correlation)
   json    Full detection result as JSON
@@ -73,7 +90,11 @@ DETECTION METHODS:
     - WordPress REST API /wp-json/ probe (confidence: 70%)
     - readme.html version parsing (confidence: 85%)
     - Script/style ?ver= parameter extraction (confidence: 80%)
+    - JS fingerprint detection (confidence: 75%) [NEW in v0.4.0]
+      * SHA-256 hash matching of wp-includes/js/* files
+      * Version comment extraction from JS headers
     - /wp-content/plugins/<slug>/readme.txt probing
+    - /wp-content/plugins/<slug>/*.js version extraction
     - /wp-content/themes/<slug>/style.css probing
     - HTML parsing for plugin/theme path discovery
 
@@ -154,6 +175,9 @@ async function main(): Promise<void> {
       retry: { type: 'string', default: '2' },
       targets: { type: 'string' },
       config: { type: 'string' },
+      fingerprint: { type: 'boolean', default: true },
+      'no-fingerprint': { type: 'boolean', default: false },
+      audit: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
       version: { type: 'boolean', default: false },
     },
@@ -194,6 +218,7 @@ async function main(): Promise<void> {
     concurrency: parseInt(values.concurrency || '5', 10),
     retry: parseInt(values.retry || '2', 10),
     configPath: values.config,
+    fingerprint: values['no-fingerprint'] ? false : (values.fingerprint ?? true),
   };
 
   try {
@@ -224,6 +249,17 @@ async function main(): Promise<void> {
           }
           
           const result = await scanRemote(url, options);
+          
+          // Run audit if --audit flag is set
+          if (values.audit) {
+            if (options.verbose) {
+              console.error(`Running security audit on ${url}...`);
+            }
+            const misconfigs = await runMisconfigChecks(url, options);
+            const pluginVulns = await runPluginVulnChecks(url, result.plugins, options);
+            result.misconfigs = [...misconfigs, ...pluginVulns];
+          }
+          
           const hasComponents = !!(result.core || result.plugins.length > 0 || result.themes.length > 0);
           results.push({
             output: format(result, options.format),
@@ -241,6 +277,17 @@ async function main(): Promise<void> {
         }
         
         const result = await scanRemote(url, options);
+        
+        // Run audit if --audit flag is set
+        if (values.audit) {
+          if (options.verbose) {
+            console.error('Running security audit...');
+          }
+          const misconfigs = await runMisconfigChecks(url, options);
+          const pluginVulns = await runPluginVulnChecks(url, result.plugins, options);
+          result.misconfigs = [...misconfigs, ...pluginVulns];
+        }
+        
         const hasComponents = !!(result.core || result.plugins.length > 0 || result.themes.length > 0);
         results.push({
           output: format(result, options.format),
@@ -248,6 +295,45 @@ async function main(): Promise<void> {
           hasErrors: result.errors.length > 0,
         });
       }
+    } else if (command === 'audit') {
+      // Security audit command
+      const url = positionals[1];
+      if (!url) {
+        console.error('Error: URL required for security audit');
+        console.error('Usage: wpvet audit <url>');
+        process.exit(EXIT_ERROR);
+      }
+      
+      if (options.verbose) {
+        console.error(`Running security audit on ${url}...`);
+      }
+      
+      const auditResult: AuditResult = {
+        target: url,
+        timestamp: new Date().toISOString(),
+        misconfigs: [],
+        pluginVulns: [],
+        errors: [],
+      };
+      
+      try {
+        // Run misconfiguration checks
+        auditResult.misconfigs = await runMisconfigChecks(url, options);
+        
+        // Run all plugin vulnerability checks (comprehensive mode)
+        auditResult.pluginVulns = await runAllPluginVulnChecks(url, options);
+      } catch (e) {
+        auditResult.errors.push(`Audit failed: ${e instanceof Error ? e.message : e}`);
+      }
+      
+      const hasIssues = auditResult.misconfigs.length > 0 || auditResult.pluginVulns.length > 0;
+      const auditFormat = options.format === 'cpe' ? 'table' : options.format as 'json' | 'table';
+      
+      results.push({
+        output: formatAudit(auditResult, auditFormat),
+        hasComponents: hasIssues,
+        hasErrors: auditResult.errors.length > 0,
+      });
     } else if (command === 'scan') {
       // SSH + WP-CLI scan
       const sshUrl = positionals[1];

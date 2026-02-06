@@ -66,6 +66,7 @@ export interface DetectionResult {
   themes: DetectedComponent[];
   errors: string[];
   site?: SiteInfo;
+  misconfigs?: MisconfigResult[];  // Security audit results
 }
 
 export interface ScanOptions {
@@ -79,20 +80,60 @@ export interface ScanOptions {
   retry: number;            // Retry count for failed requests
   retryDelay: number;       // Base delay between retries (ms)
   configPath?: string;      // Path to config file
+  // v0.4.0: JS fingerprint detection
+  fingerprint: boolean;     // Enable JS fingerprint detection (default: true)
 }
 
 export const DEFAULT_OPTIONS: ScanOptions = {
   format: 'table',
   stdin: false,
   timeout: 30000,
-  userAgent: 'WpVet/0.3.0 (Security Scanner)',
+  userAgent: 'WpVet/0.4.0 (Security Scanner)',
   verbose: false,
   concurrency: 5,
   retry: 2,
   retryDelay: 1000,
+  fingerprint: true,
 };
 
 /** Exit codes */
 export const EXIT_SUCCESS = 0;           // Normal exit, components detected
 export const EXIT_NOT_DETECTED = 1;      // WordPress not detected / no components
 export const EXIT_ERROR = 2;             // Error occurred
+
+/** Misconfiguration detection types */
+export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
+
+export interface MisconfigResult {
+  id: string;
+  name: string;
+  severity: Severity;
+  description: string;
+  evidence?: string;
+  recommendation: string;
+}
+
+export interface MisconfigCheck {
+  id: string;
+  name: string;
+  description: string;
+  severity: Severity;
+  check: (baseUrl: string, options: ScanOptions) => Promise<MisconfigResult | null>;
+}
+
+export interface PluginVulnCheck {
+  pluginSlug: string;
+  vulnId: string;
+  name: string;
+  description: string;
+  severity: Severity;
+  check: (baseUrl: string, options: ScanOptions) => Promise<MisconfigResult | null>;
+}
+
+export interface AuditResult {
+  target: string;
+  timestamp: string;
+  misconfigs: MisconfigResult[];
+  pluginVulns: MisconfigResult[];
+  errors: string[];
+}

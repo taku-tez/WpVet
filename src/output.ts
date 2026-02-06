@@ -1,12 +1,13 @@
 /**
- * Output formatting for WpVet - v0.3.0
+ * Output formatting for WpVet - v0.4.0
  * 
  * Enhanced with:
  * - update, auto_update columns in table output
  * - Site info display
+ * - Security audit results (misconfigs)
  */
 
-import type { DetectionResult, DetectedComponent, SiteInfo } from './types.js';
+import type { DetectionResult, DetectedComponent, SiteInfo, MisconfigResult, AuditResult, Severity } from './types.js';
 
 export function formatCpe(result: DetectionResult): string {
   const cpes: string[] = [];
@@ -46,6 +47,47 @@ function formatSiteInfo(site?: SiteInfo): string[] {
   if (site.multisite !== undefined) lines.push(`  Multisite: ${site.multisite ? 'Yes' : 'No'}`);
   lines.push('');
   
+  return lines;
+}
+
+function severityColor(severity: Severity): string {
+  // ANSI color codes for terminal
+  const colors: Record<Severity, string> = {
+    critical: '\x1b[91m', // Bright red
+    high: '\x1b[31m',     // Red
+    medium: '\x1b[33m',   // Yellow
+    low: '\x1b[36m',      // Cyan
+    info: '\x1b[90m',     // Gray
+  };
+  return colors[severity] || '';
+}
+
+const RESET = '\x1b[0m';
+
+function formatSeverity(severity: Severity, useColor = true): string {
+  const label = severity.toUpperCase();
+  const padded = pad(label, 10);
+  if (useColor && process.stdout.isTTY) {
+    return `${severityColor(severity)}${padded}${RESET}`;
+  }
+  return padded;
+}
+
+function formatMisconfigsTable(misconfigs: MisconfigResult[]): string[] {
+  if (misconfigs.length === 0) return [];
+  
+  const lines: string[] = ['Security Issues:'];
+  lines.push(`  ${pad('Severity', 10)} ${pad('Issue', 35)} Evidence`);
+  lines.push(`  ${'-'.repeat(10)} ${'-'.repeat(35)} ${'-'.repeat(45)}`);
+  
+  for (const m of misconfigs) {
+    const severity = formatSeverity(m.severity);
+    const evidence = m.evidence || '-';
+    const truncatedEvidence = evidence.length > 45 ? evidence.substring(0, 42) + '...' : evidence;
+    lines.push(`  ${severity} ${pad(m.name, 35)} ${truncatedEvidence}`);
+  }
+  
+  lines.push('');
   return lines;
 }
 
@@ -163,6 +205,10 @@ export function formatTable(result: DetectionResult): string {
     lines.push('');
   }
   
+  if (result.misconfigs && result.misconfigs.length > 0) {
+    lines.push(...formatMisconfigsTable(result.misconfigs));
+  }
+  
   if (result.errors.length > 0) {
     lines.push('Errors:');
     for (const e of result.errors) {
@@ -176,7 +222,13 @@ export function formatTable(result: DetectionResult): string {
     result.plugins.length + 
     result.themes.length;
   
+  const issueCount = result.misconfigs?.length || 0;
   lines.push(`Total: ${totalComponents} component(s) detected`);
+  if (issueCount > 0) {
+    const criticalCount = result.misconfigs?.filter(m => m.severity === 'critical').length || 0;
+    const highCount = result.misconfigs?.filter(m => m.severity === 'high').length || 0;
+    lines.push(`Security: ${issueCount} issue(s) found (${criticalCount} critical, ${highCount} high)`);
+  }
   
   return lines.join('\n');
 }
@@ -190,5 +242,75 @@ export function format(result: DetectionResult, fmt: 'cpe' | 'json' | 'table'): 
     case 'table':
     default:
       return formatTable(result);
+  }
+}
+
+/**
+ * Format audit result (misconfigs only)
+ */
+export function formatAuditTable(result: AuditResult): string {
+  const lines: string[] = [];
+  
+  lines.push(`Target: ${result.target}`);
+  lines.push(`Scan time: ${result.timestamp}`);
+  lines.push('');
+  
+  const allIssues = [...result.misconfigs, ...result.pluginVulns];
+  
+  if (allIssues.length > 0) {
+    lines.push('Security Issues:');
+    lines.push(`  ${pad('Severity', 10)} ${pad('Issue', 35)} Evidence`);
+    lines.push(`  ${'-'.repeat(10)} ${'-'.repeat(35)} ${'-'.repeat(45)}`);
+    
+    // Sort by severity
+    const severityOrder: Record<string, number> = {
+      critical: 0,
+      high: 1,
+      medium: 2,
+      low: 3,
+      info: 4,
+    };
+    allIssues.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
+    
+    for (const m of allIssues) {
+      const severity = formatSeverity(m.severity);
+      const evidence = m.evidence || '-';
+      const truncatedEvidence = evidence.length > 45 ? evidence.substring(0, 42) + '...' : evidence;
+      lines.push(`  ${severity} ${pad(m.name, 35)} ${truncatedEvidence}`);
+    }
+    lines.push('');
+  }
+  
+  if (result.errors.length > 0) {
+    lines.push('Errors:');
+    for (const e of result.errors) {
+      lines.push(`  - ${e}`);
+    }
+    lines.push('');
+  }
+  
+  const criticalCount = allIssues.filter(m => m.severity === 'critical').length;
+  const highCount = allIssues.filter(m => m.severity === 'high').length;
+  const mediumCount = allIssues.filter(m => m.severity === 'medium').length;
+  
+  lines.push(`Summary: ${allIssues.length} issue(s) found`);
+  if (allIssues.length > 0) {
+    lines.push(`  Critical: ${criticalCount}, High: ${highCount}, Medium: ${mediumCount}`);
+  }
+  
+  return lines.join('\n');
+}
+
+export function formatAuditJson(result: AuditResult): string {
+  return JSON.stringify(result, null, 2);
+}
+
+export function formatAudit(result: AuditResult, fmt: 'json' | 'table'): string {
+  switch (fmt) {
+    case 'json':
+      return formatAuditJson(result);
+    case 'table':
+    default:
+      return formatAuditTable(result);
   }
 }

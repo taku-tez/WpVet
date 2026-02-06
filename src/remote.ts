@@ -1,16 +1,23 @@
 /**
- * Remote WordPress detection - v0.3.0
+ * Remote WordPress detection - v0.4.0
  * 
  * Enhanced with:
  * - Multiple version extraction patterns (wp-json, readme.html, ?ver=)
  * - HTML parsing for plugin/theme discovery
  * - Concurrency limiting and retry with exponential backoff
  * - HTTP/HTTPS fallback
+ * - JS fingerprint detection for hidden meta generator
  */
 
 import type { DetectedComponent, DetectionResult, ScanOptions } from './types.js';
 import { generateCoreCpe, generatePluginCpe, generateThemeCpe } from './cpe.js';
 import { loadConfig, getPluginsToScan, getThemesToScan, getPluginVendor, type WpVetConfig } from './config.js';
+import {
+  detectCoreByJsFingerprint,
+  detectPluginFromJs,
+  extractPluginVersionsFromVerParam,
+  type JsFingerprintResult,
+} from './fingerprint-js.js';
 
 /**
  * Concurrency limiter for parallel requests
@@ -277,16 +284,39 @@ export async function detectWordPressCore(
   const sources: VersionSource[] = [];
   
   // Try multiple version extraction methods
+  // 1. Meta generator (highest confidence)
   const htmlVersion = await extractCoreVersionFromHtml(html, baseUrl, options, limiter);
   if (htmlVersion) sources.push(htmlVersion);
   
+  // 2. readme.html
   const readmeVersion = await extractCoreVersionFromReadme(baseUrl, options, limiter);
   if (readmeVersion) sources.push(readmeVersion);
   
+  // 3. wp-json
   const wpJsonVersion = await extractCoreVersionFromWpJson(baseUrl, options, limiter);
   if (wpJsonVersion) sources.push(wpJsonVersion);
   
-  // Check if HTML has WordPress indicators
+  // 4. JS fingerprint detection (when enabled and no precise version yet)
+  const hasPreciseVersion = sources.some(s => 
+    s.version !== 'detected' && s.version !== 'unknown'
+  );
+  
+  if (options.fingerprint && !hasPreciseVersion) {
+    try {
+      const fingerprintResult = await detectCoreByJsFingerprint(baseUrl, options);
+      if (fingerprintResult.version) {
+        sources.push({
+          version: fingerprintResult.version,
+          confidence: fingerprintResult.confidence,
+          source: fingerprintResult.source,
+        });
+      }
+    } catch {
+      // Fingerprint detection failed, continue with other methods
+    }
+  }
+  
+  // 5. Check if HTML has WordPress indicators (lowest confidence)
   if (sources.length === 0) {
     if (html.includes('/wp-includes/') || html.includes('/wp-content/')) {
       sources.push({ version: 'unknown', confidence: 50, source: 'wp-paths' });
@@ -325,20 +355,58 @@ export async function detectPlugin(
   slug: string,
   options: ScanOptions,
   limiter: ConcurrencyLimiter,
-  config: WpVetConfig
+  config: WpVetConfig,
+  verParamVersions?: Map<string, string>
 ): Promise<DetectedComponent | null> {
+  // 1. Try readme.txt first (most reliable)
   const readmeUrl = `${baseUrl}/wp-content/plugins/${slug}/readme.txt`;
   const response = await fetchWithRetry(readmeUrl, options, limiter);
   
-  if (!response?.ok) return null;
+  if (response?.ok) {
+    const text = await response.text();
+    const version = extractVersion(text, [
+      /Stable tag:\s*([\d.]+)/i,
+      /Version:\s*([\d.]+)/i,
+    ]);
+    
+    if (version) {
+      const vendor = getPluginVendor(slug, config);
+      return {
+        type: 'plugin',
+        slug,
+        name: slug,
+        version,
+        cpe: generatePluginCpe(slug, version, vendor),
+        confidence: 85,
+        source: 'remote',
+      };
+    }
+  }
   
-  const text = await response.text();
-  const version = extractVersion(text, [
-    /Stable tag:\s*([\d.]+)/i,
-    /Version:\s*([\d.]+)/i,
-  ]);
+  // 2. Try JS fingerprint detection
+  if (options.fingerprint) {
+    try {
+      const jsResult = await detectPluginFromJs(baseUrl, slug, options);
+      if (jsResult && jsResult.version !== 'detected') {
+        const vendor = getPluginVendor(slug, config);
+        return {
+          type: 'plugin',
+          slug,
+          name: slug,
+          version: jsResult.version,
+          cpe: generatePluginCpe(slug, jsResult.version, vendor),
+          confidence: jsResult.confidence,
+          source: 'remote',
+        };
+      }
+    } catch {
+      // Continue to next method
+    }
+  }
   
-  if (version) {
+  // 3. Try ?ver= parameter version (from HTML parsing)
+  if (verParamVersions?.has(slug)) {
+    const version = verParamVersions.get(slug)!;
     const vendor = getPluginVendor(slug, config);
     return {
       type: 'plugin',
@@ -346,7 +414,7 @@ export async function detectPlugin(
       name: slug,
       version,
       cpe: generatePluginCpe(slug, version, vendor),
-      confidence: 85,
+      confidence: 70, // Lower confidence - ver param might be different from actual version
       source: 'remote',
     };
   }
@@ -430,6 +498,9 @@ export async function scanRemote(
   const htmlPlugins = extractPluginsFromHtml(html);
   const htmlThemes = extractThemesFromHtml(html);
   
+  // Extract plugin versions from ?ver= parameters
+  const verParamVersions = extractPluginVersionsFromVerParam(html);
+  
   // Merge with common lists
   const pluginsToScan = new Set([
     ...getPluginsToScan(config),
@@ -443,7 +514,7 @@ export async function scanRemote(
   
   // Scan plugins with concurrency control
   const pluginPromises = Array.from(pluginsToScan).map(slug =>
-    detectPlugin(baseUrl, slug, options, limiter, config).catch(() => null)
+    detectPlugin(baseUrl, slug, options, limiter, config, verParamVersions).catch(() => null)
   );
   const pluginResults = await Promise.all(pluginPromises);
   result.plugins = pluginResults.filter((p): p is DetectedComponent => p !== null);
