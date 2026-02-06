@@ -1,5 +1,11 @@
 /**
- * SSH-based WP-CLI execution
+ * SSH-based WP-CLI execution - v0.3.0
+ * 
+ * Enhanced with:
+ * - Automatic WP path detection
+ * - Automatic WP-CLI path detection
+ * - Better error messages
+ * - URL query parameter support (?path=, ?wp-cli=)
  */
 
 import { spawn } from 'node:child_process';
@@ -11,39 +17,142 @@ export interface SshConfig {
   user?: string;
   port?: number;
   keyPath?: string;
-  wpPath?: string;  // WordPress installation path
-  wpPathEscaped?: string;
-  wpCli?: string;   // WP-CLI binary path (default: wp)
-  wpCliEscaped?: string;
+  wpPath?: string;    // WordPress installation path
+  wpCli?: string;     // WP-CLI binary path (default: wp)
 }
 
-function escapeShellArg(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
+/** Common WordPress installation paths to try */
+const COMMON_WP_PATHS = [
+  '/var/www/html',
+  '/var/www/wordpress',
+  '/var/www/public_html',
+  '/var/www/htdocs',
+  '/home/*/public_html',
+  '/home/*/www',
+  '/srv/www/htdocs',
+  '/usr/share/nginx/html',
+];
+
+/** SSH error types */
+export enum SshErrorType {
+  AUTH_FAILED = 'AUTH_FAILED',
+  TIMEOUT = 'TIMEOUT',
+  CONNECTION_REFUSED = 'CONNECTION_REFUSED',
+  HOST_NOT_FOUND = 'HOST_NOT_FOUND',
+  COMMAND_FAILED = 'COMMAND_FAILED',
+  JSON_PARSE_ERROR = 'JSON_PARSE_ERROR',
+  WP_CLI_NOT_FOUND = 'WP_CLI_NOT_FOUND',
+  WP_NOT_FOUND = 'WP_NOT_FOUND',
+  UNKNOWN = 'UNKNOWN',
 }
 
-export function buildSshTarget(config: SshConfig, wpPath: string): string {
-  const userPart = config.user ? `${config.user}@` : '';
-  const portPart = config.port ? `:${config.port}` : '';
-  return `ssh://${userPart}${config.host}${portPart}${wpPath}`;
+export class SshError extends Error {
+  constructor(
+    public type: SshErrorType,
+    message: string,
+    public exitCode?: number
+  ) {
+    super(message);
+    this.name = 'SshError';
+  }
 }
 
 /**
- * Parse SSH URL: ssh://user@host:port/path
+ * Parse SSH URL with query parameters: ssh://user@host:port/path?wp-cli=/path&path=/override
  */
 export function parseSshUrl(url: string): SshConfig {
-  const match = url.match(/^ssh:\/\/(?:([^@]+)@)?([^:\/]+)(?::(\d+))?(\/.*)?$/);
-  if (!match) {
-    throw new Error(`Invalid SSH URL: ${url}`);
+  // Extract query string if present
+  let queryString = '';
+  let urlWithoutQuery = url;
+  
+  const queryIndex = url.indexOf('?');
+  if (queryIndex !== -1) {
+    queryString = url.substring(queryIndex + 1);
+    urlWithoutQuery = url.substring(0, queryIndex);
   }
-
-  const wpPath = match[4] || '/var/www/html';
-  return {
+  
+  const match = urlWithoutQuery.match(/^ssh:\/\/(?:([^@]+)@)?([^:\/]+)(?::(\d+))?(\/.*)?$/);
+  if (!match) {
+    throw new Error(`Invalid SSH URL: ${url}\nExpected format: ssh://[user@]host[:port]/path[?wp-cli=PATH&path=PATH]`);
+  }
+  
+  const config: SshConfig = {
     user: match[1],
     host: match[2],
     port: match[3] ? parseInt(match[3], 10) : undefined,
-    wpPath,
-    wpPathEscaped: escapeShellArg(wpPath),
+    wpPath: match[4] || '/var/www/html',
   };
+  
+  // Parse query parameters
+  if (queryString) {
+    const params = new URLSearchParams(queryString);
+    if (params.has('path')) {
+      config.wpPath = params.get('path')!;
+    }
+    if (params.has('wp-cli')) {
+      config.wpCli = params.get('wp-cli')!;
+    }
+  }
+  
+  return config;
+}
+
+/**
+ * Classify SSH error from stderr/exit code
+ */
+function classifySshError(stderr: string, exitCode: number): SshError {
+  const stderrLower = stderr.toLowerCase();
+  
+  if (stderrLower.includes('permission denied') || 
+      stderrLower.includes('authentication failed') ||
+      stderrLower.includes('publickey')) {
+    return new SshError(
+      SshErrorType.AUTH_FAILED,
+      `SSH authentication failed. Check your credentials or SSH key.`,
+      exitCode
+    );
+  }
+  
+  if (stderrLower.includes('connection timed out') ||
+      stderrLower.includes('connection refused')) {
+    return new SshError(
+      SshErrorType.CONNECTION_REFUSED,
+      `Could not connect to SSH server. Check host and port.`,
+      exitCode
+    );
+  }
+  
+  if (stderrLower.includes('could not resolve hostname') ||
+      stderrLower.includes('name or service not known')) {
+    return new SshError(
+      SshErrorType.HOST_NOT_FOUND,
+      `Host not found. Check the hostname.`,
+      exitCode
+    );
+  }
+  
+  if (stderrLower.includes('wp-cli') || stderrLower.includes('command not found: wp')) {
+    return new SshError(
+      SshErrorType.WP_CLI_NOT_FOUND,
+      `WP-CLI not found on remote server. Install it or specify --wp-cli path.`,
+      exitCode
+    );
+  }
+  
+  if (stderrLower.includes('this does not appear to be a wordpress install') ||
+      stderrLower.includes('error: not a wordpress site')) {
+    return new SshError(
+      SshErrorType.WP_NOT_FOUND,
+      `WordPress not found at the specified path.`,
+      exitCode
+    );
+  }
+  
+  return new SshError(
+    SshErrorType.COMMAND_FAILED,
+    `SSH command failed (exit ${exitCode}): ${stderr || 'Unknown error'}`,
+    exitCode
+  );
 }
 
 /**
@@ -78,6 +187,7 @@ async function sshExec(
     args.push(command);
     
     const proc = spawn('ssh', args, {
+      timeout,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     
@@ -87,42 +197,104 @@ async function sshExec(
     proc.stdout.on('data', (data) => { stdout += data; });
     proc.stderr.on('data', (data) => { stderr += data; });
     
-    let settled = false;
-    const timeoutId = setTimeout(() => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      proc.kill();
-      reject(new Error(`SSH command timed out after ${timeout}`));
-    }, timeout);
-
-    const clearTimer = () => {
-      clearTimeout(timeoutId);
-    };
-
     proc.on('close', (code) => {
-      clearTimer();
-      if (settled) {
-        return;
-      }
-      settled = true;
       if (code === 0) {
         resolve(stdout);
       } else {
-        reject(new Error(`SSH command failed (exit ${code}): ${stderr || stdout}`));
+        reject(classifySshError(stderr || stdout, code || 1));
       }
     });
-
+    
     proc.on('error', (err) => {
-      clearTimer();
-      if (settled) {
-        return;
+      if (err.message.includes('ETIMEDOUT') || err.message.includes('timeout')) {
+        reject(new SshError(SshErrorType.TIMEOUT, `SSH connection timed out after ${timeout}ms`));
+      } else {
+        reject(new SshError(SshErrorType.UNKNOWN, `SSH error: ${err.message}`));
       }
-      settled = true;
-      reject(new Error(`SSH error: ${err.message}`));
     });
   });
+}
+
+/**
+ * Find WP-CLI binary path
+ */
+async function findWpCli(
+  config: SshConfig,
+  timeout: number
+): Promise<string> {
+  const paths = ['wp', '/usr/local/bin/wp', '/usr/bin/wp', '~/.local/bin/wp', '~/.wp-cli/bin/wp'];
+  
+  if (config.wpCli) {
+    paths.unshift(config.wpCli);
+  }
+  
+  for (const path of paths) {
+    try {
+      await sshExec(config, `${path} --version 2>/dev/null`, timeout);
+      return path;
+    } catch {
+      continue;
+    }
+  }
+  
+  // Try 'which wp' as fallback
+  try {
+    const wpPath = (await sshExec(config, 'which wp 2>/dev/null', timeout)).trim();
+    if (wpPath) return wpPath;
+  } catch {
+    // Ignore
+  }
+  
+  throw new SshError(
+    SshErrorType.WP_CLI_NOT_FOUND,
+    'WP-CLI not found. Install it or specify --wp-cli path.'
+  );
+}
+
+/**
+ * Find WordPress installation path
+ */
+async function findWpPath(
+  config: SshConfig,
+  wpCli: string,
+  timeout: number
+): Promise<string> {
+  // If path is specified, use it
+  if (config.wpPath && config.wpPath !== '/var/www/html') {
+    // Verify it's a valid WordPress installation
+    try {
+      await sshExec(config, `cd ${config.wpPath} && ${wpCli} core version 2>/dev/null`, timeout);
+      return config.wpPath;
+    } catch {
+      // Continue to auto-detect
+    }
+  }
+  
+  // Try common paths
+  for (const pathPattern of COMMON_WP_PATHS) {
+    try {
+      // Expand wildcards
+      const expandedPaths = await sshExec(
+        config,
+        `ls -d ${pathPattern} 2>/dev/null || true`,
+        timeout
+      );
+      
+      for (const path of expandedPaths.trim().split('\n').filter(Boolean)) {
+        try {
+          await sshExec(config, `cd ${path} && ${wpCli} core version 2>/dev/null`, timeout);
+          return path;
+        } catch {
+          continue;
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+  
+  // Default to specified path or /var/www/html
+  return config.wpPath || '/var/www/html';
 }
 
 /**
@@ -132,13 +304,8 @@ export async function scanViaSsh(
   config: SshConfig,
   options: ScanOptions
 ): Promise<DetectionResult> {
-  const wpCli = config.wpCli || 'wp';
-  const wpPath = config.wpPath || '/var/www/html';
-  const escapedWpCli = config.wpCliEscaped ?? escapeShellArg(wpCli);
-  const escapedWpPath = config.wpPathEscaped ?? escapeShellArg(wpPath);
-  
   const result: DetectionResult = {
-    target: buildSshTarget(config, wpPath),
+    target: `ssh://${config.user ? config.user + '@' : ''}${config.host}${config.wpPath || ''}`,
     timestamp: new Date().toISOString(),
     source: 'wp-cli',
     plugins: [],
@@ -147,55 +314,107 @@ export async function scanViaSsh(
   };
   
   try {
+    // Find WP-CLI
+    const wpCli = await findWpCli(config, options.timeout);
+    if (options.verbose) {
+      console.error(`Using WP-CLI: ${wpCli}`);
+    }
+    
+    // Find WordPress path
+    const wpPath = await findWpPath(config, wpCli, options.timeout);
+    if (options.verbose) {
+      console.error(`WordPress path: ${wpPath}`);
+    }
+    
+    // Update target with resolved path
+    result.target = `ssh://${config.user ? config.user + '@' : ''}${config.host}${wpPath}`;
+    
     // Get core version
-    const coreCmd = `cd ${escapedWpPath} && ${escapedWpCli} core version 2>/dev/null`;
-    const coreVersionRaw = await sshExec(config, coreCmd, options.timeout);
-    let coreVersion = coreVersionRaw.trim();
-    if (!coreVersion) {
-      result.errors.push('core version missing from wp core version output');
-      coreVersion = 'unknown';
+    const coreVersion = (await sshExec(
+      config,
+      `cd ${wpPath} && ${wpCli} core version 2>/dev/null`,
+      options.timeout
+    )).trim();
+    
+    // Get site info
+    let siteInfo = {};
+    try {
+      const siteJson = await sshExec(
+        config,
+        `cd ${wpPath} && ${wpCli} option get siteurl --format=json 2>/dev/null`,
+        options.timeout
+      );
+      const homeJson = await sshExec(
+        config,
+        `cd ${wpPath} && ${wpCli} option get home --format=json 2>/dev/null`,
+        options.timeout
+      );
+      const multisiteJson = await sshExec(
+        config,
+        `cd ${wpPath} && ${wpCli} config get MULTISITE --format=json 2>/dev/null || echo "false"`,
+        options.timeout
+      );
+      
+      siteInfo = {
+        site_url: JSON.parse(siteJson),
+        home_url: JSON.parse(homeJson),
+        multisite: JSON.parse(multisiteJson) === true,
+      };
+    } catch {
+      // Site info is optional
     }
     
     // Get plugins
-    const pluginCmd = `cd ${escapedWpPath} && ${escapedWpCli} plugin list --format=json 2>/dev/null`;
-    const pluginJson = await sshExec(config, pluginCmd, options.timeout);
+    const pluginJson = await sshExec(
+      config,
+      `cd ${wpPath} && ${wpCli} plugin list --format=json 2>/dev/null`,
+      options.timeout
+    );
     
     // Get themes
-    const themeCmd = `cd ${escapedWpPath} && ${escapedWpCli} theme list --format=json 2>/dev/null`;
-    const themeJson = await sshExec(config, themeCmd, options.timeout);
+    const themeJson = await sshExec(
+      config,
+      `cd ${wpPath} && ${wpCli} theme list --format=json 2>/dev/null`,
+      options.timeout
+    );
     
-    // Combine into WP-CLI format
-    let plugins: unknown[] = [];
+    // Parse and combine
+    let plugins = [];
+    let themes = [];
+    
     try {
       plugins = JSON.parse(pluginJson || '[]');
-    } catch (error) {
-      result.errors.push(
-        `plugin JSON parse failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-      plugins = [];
+    } catch (e) {
+      result.errors.push(`Failed to parse plugin list: ${e}`);
     }
-
-    let themes: unknown[] = [];
+    
     try {
       themes = JSON.parse(themeJson || '[]');
-    } catch (error) {
-      result.errors.push(
-        `theme JSON parse failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-      themes = [];
+    } catch (e) {
+      result.errors.push(`Failed to parse theme list: ${e}`);
     }
-
+    
     const combined = {
-      core: { version: coreVersion },
+      core: { version: coreVersion, ...siteInfo },
       plugins,
       themes,
     };
     
     const parsed = wpcliToDetectionResult(combined, result.target);
+    
+    // Copy site info
+    if (Object.keys(siteInfo).length > 0) {
+      parsed.site = siteInfo;
+    }
+    
     return parsed;
     
   } catch (error) {
-    result.errors.push(error instanceof Error ? error.message : String(error));
+    if (error instanceof SshError) {
+      result.errors.push(`[${error.type}] ${error.message}`);
+    } else {
+      result.errors.push(error instanceof Error ? error.message : String(error));
+    }
     return result;
   }
 }

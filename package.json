@@ -1,6 +1,6 @@
 {
   "name": "wpvet",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "WordPress plugin/theme security scanner with CPE output for vulnerability correlation",
   "main": "dist/index.js",
   "bin": {

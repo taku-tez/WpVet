@@ -1,14 +1,26 @@
 /**
- * WP-CLI JSON input parser
+ * WP-CLI JSON input parser - v0.3.0
  * 
- * Parses output from:
- *   wp plugin list --format=json
- *   wp theme list --format=json
- *   wp core version
+ * Enhanced with:
+ * - NDJSON partial failure tracking
+ * - Additional core fields (site_url, home_url, multisite)
+ * - Better error handling
  */
 
-import type { WpCliInput, WpPlugin, WpTheme, DetectedComponent, DetectionResult } from './types.js';
+import type { WpCliInput, WpPlugin, WpTheme, DetectedComponent, DetectionResult, SiteInfo } from './types.js';
 import { generateCoreCpe, generatePluginCpe, generateThemeCpe } from './cpe.js';
+import { loadConfig, getPluginVendor } from './config.js';
+
+interface ParseError {
+  line: number;
+  content: string;
+  error: string;
+}
+
+interface ParseResult {
+  data: WpCliInput;
+  errors: ParseError[];
+}
 
 /**
  * Parse WP-CLI plugin list JSON
@@ -24,12 +36,11 @@ export function parsePluginList(json: unknown[]): WpPlugin[] {
     }
     
     const obj = item as Record<string, unknown>;
-    const trimmedVersion = typeof obj.version === 'string' ? obj.version.trim() : obj.version;
     
     return {
       name: String(obj.name || obj.slug || 'unknown'),
       slug: String(obj.name || obj.slug || 'unknown'),
-      version: trimmedVersion ? String(trimmedVersion) : 'unknown',
+      version: String(obj.version || 'unknown'),
       status: (obj.status as WpPlugin['status']) || 'inactive',
       update: obj.update === 'available' ? 'available' : 'none',
       auto_update: obj.auto_update === 'on' ? 'on' : 'off',
@@ -54,14 +65,14 @@ export function parseThemeList(json: unknown[]): WpTheme[] {
     }
     
     const obj = item as Record<string, unknown>;
-    const trimmedVersion = typeof obj.version === 'string' ? obj.version.trim() : obj.version;
     
     return {
       name: String(obj.name || obj.slug || 'unknown'),
-      slug: String(obj.stylesheet || obj.name || 'unknown'),
-      version: trimmedVersion ? String(trimmedVersion) : 'unknown',
+      slug: String(obj.name || obj.slug || 'unknown'),
+      version: String(obj.version || 'unknown'),
       status: (obj.status as WpTheme['status']) || 'inactive',
       update: obj.update === 'available' ? 'available' : 'none',
+      auto_update: obj.auto_update === 'on' ? 'on' : 'off',
       title: obj.title ? String(obj.title) : undefined,
       author: obj.author ? String(obj.author) : undefined,
     };
@@ -69,102 +80,78 @@ export function parseThemeList(json: unknown[]): WpTheme[] {
 }
 
 /**
- * Parse combined WP-CLI output
- * 
- * Supports:
- * - Array of plugins or themes
- * - Object with { plugins: [], themes: [], core: {} }
+ * Parse combined WP-CLI output with NDJSON support
  */
-export function parseWpCliInput(input: string): WpCliInput {
+export function parseWpCliInput(input: string): ParseResult {
   let parsed: unknown;
+  const errors: ParseError[] = [];
   
   try {
     parsed = JSON.parse(input);
   } catch (e) {
-    // Try to parse as NDJSON (multiple JSON objects)
+    // Try to parse as NDJSON (multiple JSON objects per line)
     const lines = input.trim().split('\n').filter(l => l.trim());
     if (lines.length === 0) {
       throw new Error('Empty input');
     }
     
     const results: WpCliInput = { plugins: [], themes: [] };
-    let validLines = 0;
     
-    for (const line of lines) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
       try {
         const obj = JSON.parse(line);
-        validLines += 1;
         if (Array.isArray(obj)) {
-          // Try to detect if it's plugins or themes
-          if (obj[0]?.status === 'active' || obj[0]?.status === 'inactive') {
-            // Could be either, check for theme-specific fields
-            if (obj[0]?.stylesheet) {
-              results.themes = parseThemeList(obj);
-            } else {
-              results.plugins = parsePluginList(obj);
-            }
+          // Detect if plugins or themes
+          if (obj[0]?.stylesheet) {
+            results.themes = parseThemeList(obj);
+          } else {
+            results.plugins = parsePluginList(obj);
           }
         } else if (typeof obj === 'object' && obj !== null) {
-          const record = obj as Record<string, unknown>;
-          if (record.core && typeof record.core === 'object') {
-            const core = record.core as Record<string, unknown>;
+          // Single object - could be core info or combined result
+          if (obj.version && typeof obj.version === 'string' && !obj.plugins) {
             results.core = {
-              version: String(core.version || 'unknown'),
-              site_url: core.site_url as string | undefined,
+              version: String(obj.version),
+              site_url: obj.site_url as string | undefined,
+              home_url: obj.home_url as string | undefined,
+              multisite: obj.multisite as boolean | undefined,
             };
           }
-          if (record.plugins) {
-            const parsedPlugins = parsePluginList(record.plugins as unknown[]);
-            results.plugins = results.plugins.length
-              ? results.plugins.concat(parsedPlugins)
-              : parsedPlugins;
-          }
-          if (record.themes) {
-            const parsedThemes = parseThemeList(record.themes as unknown[]);
-            results.themes = results.themes.length
-              ? results.themes.concat(parsedThemes)
-              : parsedThemes;
-          }
         }
-      } catch {
-        // Skip invalid lines
+      } catch (lineError) {
+        errors.push({
+          line: i + 1,
+          content: line.substring(0, 100) + (line.length > 100 ? '...' : ''),
+          error: lineError instanceof Error ? lineError.message : String(lineError),
+        });
       }
     }
-
-    if (validLines === 0) {
-      throw new Error('Invalid NDJSON input');
-    }
     
-    return results;
+    return { data: results, errors };
   }
   
   // Handle different input formats
   if (Array.isArray(parsed)) {
-    if (parsed.length === 0) {
-      return { plugins: [], themes: [] };
-    }
-
-    const firstItem = parsed[0];
-    const isThemeList = typeof firstItem === 'object'
-      && firstItem !== null
-      && 'stylesheet' in (firstItem as Record<string, unknown>);
-
-    return isThemeList
-      ? { plugins: [], themes: parseThemeList(parsed) }
-      : { plugins: parsePluginList(parsed), themes: [] };
+    // Assume plugins by default
+    return { data: { plugins: parsePluginList(parsed), themes: [] }, errors };
   }
   
   if (typeof parsed === 'object' && parsed !== null) {
     const obj = parsed as Record<string, unknown>;
     
-    return {
+    const data: WpCliInput = {
       core: obj.core ? {
         version: String((obj.core as Record<string, unknown>).version || 'unknown'),
         site_url: (obj.core as Record<string, unknown>).site_url as string | undefined,
+        home_url: (obj.core as Record<string, unknown>).home_url as string | undefined,
+        multisite: (obj.core as Record<string, unknown>).multisite as boolean | undefined,
       } : undefined,
       plugins: obj.plugins ? parsePluginList(obj.plugins as unknown[]) : [],
       themes: obj.themes ? parseThemeList(obj.themes as unknown[]) : [],
     };
+    
+    return { data, errors };
   }
   
   throw new Error('Invalid WP-CLI input format');
@@ -174,6 +161,8 @@ export function parseWpCliInput(input: string): WpCliInput {
  * Convert WP-CLI input to detection result
  */
 export function wpcliToDetectionResult(input: WpCliInput, target: string = 'stdin'): DetectionResult {
+  const config = loadConfig();
+  
   const result: DetectionResult = {
     target,
     timestamp: new Date().toISOString(),
@@ -182,6 +171,15 @@ export function wpcliToDetectionResult(input: WpCliInput, target: string = 'stdi
     themes: [],
     errors: [],
   };
+  
+  // Add site info if available
+  if (input.core?.site_url || input.core?.home_url || input.core?.multisite !== undefined) {
+    result.site = {
+      site_url: input.core.site_url,
+      home_url: input.core.home_url,
+      multisite: input.core.multisite,
+    };
+  }
   
   // Process core
   if (input.core) {
@@ -198,13 +196,16 @@ export function wpcliToDetectionResult(input: WpCliInput, target: string = 'stdi
   
   // Process plugins
   for (const plugin of input.plugins || []) {
+    const vendor = getPluginVendor(plugin.slug, config);
     result.plugins.push({
       type: 'plugin',
       slug: plugin.slug,
       name: plugin.title || plugin.name,
       version: plugin.version,
       status: plugin.status,
-      cpe: generatePluginCpe(plugin.slug, plugin.version),
+      update: plugin.update,
+      auto_update: plugin.auto_update,
+      cpe: generatePluginCpe(plugin.slug, plugin.version, vendor),
       confidence: 100,
       source: 'wp-cli',
     });
@@ -218,10 +219,28 @@ export function wpcliToDetectionResult(input: WpCliInput, target: string = 'stdi
       name: theme.title || theme.name,
       version: theme.version,
       status: theme.status,
+      update: theme.update,
+      auto_update: theme.auto_update,
       cpe: generateThemeCpe(theme.slug, theme.version),
       confidence: 100,
       source: 'wp-cli',
     });
+  }
+  
+  return result;
+}
+
+/**
+ * Parse WP-CLI input and convert to detection result
+ * Returns errors for partial NDJSON failures
+ */
+export function parseAndConvert(input: string, target: string = 'stdin'): DetectionResult {
+  const { data, errors } = parseWpCliInput(input);
+  const result = wpcliToDetectionResult(data, target);
+  
+  // Add parse errors
+  for (const err of errors) {
+    result.errors.push(`Line ${err.line}: ${err.error} (content: ${err.content})`);
   }
   
   return result;
