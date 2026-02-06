@@ -88,10 +88,12 @@ export function parseWpCliInput(input: string): WpCliInput {
     }
     
     const results: WpCliInput = { plugins: [], themes: [] };
+    let validLines = 0;
     
     for (const line of lines) {
       try {
         const obj = JSON.parse(line);
+        validLines += 1;
         if (Array.isArray(obj)) {
           // Try to detect if it's plugins or themes
           if (obj[0]?.status === 'active' || obj[0]?.status === 'inactive') {
@@ -127,6 +129,10 @@ export function parseWpCliInput(input: string): WpCliInput {
       } catch {
         // Skip invalid lines
       }
+    }
+
+    if (validLines === 0) {
+      throw new Error('Invalid NDJSON input');
     }
     
     return results;

@@ -33,6 +33,11 @@ test('parseWpCliInput', async (t) => {
   await t.test('throws on empty input', () => {
     assert.throws(() => parseWpCliInput(''), /Empty input/);
   });
+
+  await t.test('throws on invalid NDJSON input', () => {
+    const input = 'not-json\n{invalid}\n';
+    assert.throws(() => parseWpCliInput(input), /Invalid NDJSON input/);
+  });
 });
 
 test('wpcliToDetectionResult', async (t) => {
