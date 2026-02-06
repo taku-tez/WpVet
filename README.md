@@ -7,11 +7,11 @@ WordPress plugin/theme security scanner with CPE output for vulnerability correl
 - **WP-CLI Integration**: 100% accuracy by parsing `wp plugin list --format=json`
 - **Remote Detection**: Scan WordPress sites without server access (60-85% accuracy)
 - **SSH Scanning**: Direct scanning via SSH + WP-CLI
+- **Security Audit**: Detect misconfigurations and plugin-specific vulnerabilities
 - **CPE Output**: Standard format for vulnerability database correlation
 - **Multiple Output Formats**: CPE, JSON, table
 - **Configurable**: Custom plugin/theme lists via config file
 - **Concurrent Scanning**: Configurable concurrency with retry support
-- **JS Fingerprint Detection** (v0.4.0): Detect WordPress version when meta generator is hidden
 
 ## Installation
 
@@ -20,6 +20,50 @@ npm install -g wpvet
 ```
 
 ## Usage
+
+### Security Audit (NEW in v0.4.0)
+
+Check for WordPress misconfigurations and plugin vulnerabilities:
+
+```bash
+# Security audit only
+wpvet audit https://example.com
+
+# Security audit with JSON output
+wpvet audit https://example.com --format json
+
+# Detection + security audit combined
+wpvet detect https://example.com --audit
+```
+
+**What it checks:**
+
+| Check | Severity | Description |
+|-------|----------|-------------|
+| wp-config.php exposed | Critical | Configuration file with DB credentials accessible |
+| Debug log exposed | High | PHP error logs publicly accessible |
+| Debug mode enabled | High | PHP errors visible in HTML output |
+| install.php accessible | High | Installation script still available |
+| .htaccess exposed | High | Server configuration file accessible |
+| XML-RPC enabled | Medium | Brute-force attack vector |
+| Directory listing | Medium | File structure exposed |
+| User enumeration | Medium | Username discovery possible |
+| readme.html exposed | Low | WordPress version leak |
+| license.txt exposed | Info | Confirms WordPress installation |
+
+**Plugin-specific checks:**
+
+| Plugin | Check | Severity |
+|--------|-------|----------|
+| WooCommerce | REST API order/customer exposure | Critical |
+| UpdraftPlus | Backup files accessible | Critical |
+| Wordfence | Log files exposed | High |
+| Contact Form 7 | Upload directory exposure | High |
+| WooCommerce | Debug log exposure | Medium |
+| All in One SEO | REST API exposure | Medium |
+| WPForms | Upload directory exposure | Medium |
+| Elementor | XSS vulnerability pattern | Medium |
+| Yoast SEO | Sitemap information disclosure | Info |
 
 ### SSH + WP-CLI (Recommended - 100% Accuracy)
 
@@ -79,6 +123,9 @@ wpvet detect https://example.com --concurrency 10 --timeout 60000
 # Batch scan from file
 wpvet detect --targets urls.txt --format cpe
 
+# Batch scan with audit
+wpvet detect --targets urls.txt --audit
+
 # CPE output only
 wpvet detect https://example.com --format cpe
 
@@ -99,8 +146,7 @@ OPTIONS:
   --retry <n>              Retry count for failed requests (default: 2)
   --targets <file>         File with target URLs (one per line)
   --config <path>          Path to config file (default: ~/.wpvet/config.json)
-  --fingerprint            Enable JS fingerprint detection (default: on)
-  --no-fingerprint         Disable JS fingerprint for faster scans
+  --audit                  Include security audit (misconfigs, plugin vulns)
   -v, --verbose            Verbose output
   -h, --help               Show help
   --version                Show version
@@ -152,7 +198,33 @@ Plugins:
   contact-form-7               5.7.1      active     No       ✓ On     100%
   elementor                    3.18.0     active     ⚠ Yes    Off      100%
 
+Security Issues:
+  Severity   Issue                               Evidence
+  ---------- ----------------------------------- ---------------------------------------------
+  CRITICAL   wp-config.php Exposed               /wp-config.php.bak returned HTTP 200 with...
+  HIGH       XML-RPC Enabled                     system.listMethods available (12 wp.* methods)
+  MEDIUM     Directory Listing Enabled           /wp-content/uploads/ lists files
+
 Total: 3 component(s) detected
+Security: 3 issue(s) found (1 critical, 1 high)
+```
+
+### Audit Output (wpvet audit)
+
+```
+Target: https://example.com
+Scan time: 2024-01-15T10:30:00.000Z
+
+Security Issues:
+  Severity   Issue                               Evidence
+  ---------- ----------------------------------- ---------------------------------------------
+  CRITICAL   wp-config.php Exposed               /wp-config.php returned HTTP 200 with DB...
+  CRITICAL   UpdraftPlus - Backup Files Exposed  Backup directory accessible: /wp-content/...
+  HIGH       Debug Log Exposed                   /wp-content/debug.log is publicly accessi...
+  MEDIUM     XML-RPC Enabled                     XML-RPC responds to system.listMethods
+
+Summary: 4 issue(s) found
+  Critical: 2, High: 1, Medium: 1
 ```
 
 ### JSON Output Schema
@@ -162,35 +234,19 @@ Total: 3 component(s) detected
   "target": "https://example.com",
   "timestamp": "2024-01-15T10:30:00.000Z",
   "source": "remote",
-  "site": {
-    "site_url": "https://example.com",
-    "home_url": "https://example.com",
-    "multisite": false
-  },
-  "core": {
-    "type": "core",
-    "slug": "wordpress",
-    "name": "WordPress",
-    "version": "6.4.2",
-    "cpe": "cpe:2.3:a:wordpress:wordpress:6.4.2:*:*:*:*:*:*:*",
-    "confidence": 95,
-    "source": "remote"
-  },
-  "plugins": [
+  "core": { ... },
+  "plugins": [ ... ],
+  "themes": [ ... ],
+  "misconfigs": [
     {
-      "type": "plugin",
-      "slug": "contact-form-7",
-      "name": "Contact Form 7",
-      "version": "5.7.1",
-      "status": "active",
-      "update": "none",
-      "auto_update": "on",
-      "cpe": "cpe:2.3:a:rocklobster:contact-form-7:5.7.1:*:*:*:*:wordpress:*:*",
-      "confidence": 100,
-      "source": "wp-cli"
+      "id": "wp-config-exposed",
+      "name": "wp-config.php Exposed",
+      "severity": "critical",
+      "description": "WordPress configuration file is publicly accessible...",
+      "evidence": "/wp-config.php returned HTTP 200 with database credentials",
+      "recommendation": "Remove backup files and ensure wp-config.php is not directly accessible..."
     }
   ],
-  "themes": [],
   "errors": []
 }
 ```
@@ -204,12 +260,7 @@ Version extraction from multiple sources:
 - WordPress REST API /wp-json/ (confidence: 70%)
 - readme.html version parsing (confidence: 85%)
 - Script/style ?ver= parameter extraction (confidence: 80%)
-- **JS fingerprint detection (confidence: 75%)** [v0.4.0]
-  - SHA-256 hash matching of wp-includes/js/* files
-  - Version comment extraction from JS headers
-  - Works when meta generator is hidden
 - /wp-content/plugins/\<slug\>/readme.txt probing
-- /wp-content/plugins/\<slug\>/*.js version extraction
 - /wp-content/themes/\<slug\>/style.css probing
 - HTML parsing for plugin/theme path discovery
 
@@ -222,12 +273,29 @@ Direct WP-CLI execution:
 - Automatic WP-CLI path detection
 - Automatic WordPress path detection
 
+### Security Audit (wpvet audit)
+
+Misconfiguration checks:
+- Configuration file exposure (wp-config.php and backups)
+- Debug mode and log file exposure
+- Directory listing enabled
+- XML-RPC accessibility
+- Installation files accessible
+- User enumeration via author archives and REST API
+- .htaccess file exposure
+
+Plugin-specific vulnerability patterns:
+- Checks for known vulnerable configurations per plugin
+- Upload directory exposure
+- API endpoint exposure without authentication
+- Backup file accessibility
+
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
-| 0 | Success - WordPress detected with components |
-| 1 | No detection - WordPress not found or no components |
+| 0 | Success - WordPress detected with components (or audit found issues) |
+| 1 | No detection - WordPress not found or no components/issues detected |
 | 2 | Error - Connection error, timeout, or invalid input |
 
 ## Accuracy Comparison
