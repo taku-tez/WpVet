@@ -9,8 +9,7 @@ import { parseWpCliInput, wpcliToDetectionResult } from './wpcli.js';
 import { scanRemote } from './remote.js';
 import { parseSshUrl, scanViaSsh } from './ssh.js';
 import { format } from './output.js';
-
-const VERSION = '0.2.0';
+import { VERSION } from './version.js';
 
 const HELP = `
 wpvet - WordPress plugin/theme security scanner with CPE output
