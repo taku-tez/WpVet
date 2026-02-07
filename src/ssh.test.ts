@@ -4,7 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { parseSshUrl, SshErrorType } from './ssh.js';
+import { parseSshUrl, shellEscape, SshErrorType } from './ssh.js';
 
 test('parseSshUrl - basic URL', () => {
   const config = parseSshUrl('ssh://root@example.com/var/www/html');
@@ -71,6 +71,23 @@ test('parseSshUrl - complex path', () => {
   assert.strictEqual(config.host, 'prod.example.com');
   assert.strictEqual(config.port, 22);
   assert.strictEqual(config.wpPath, '/home/deploy/apps/wordpress');
+});
+
+
+
+test('parseSshUrl - decodes escaped path query with spaces and semicolon', () => {
+  const config = parseSshUrl('ssh://user@host/path?path=%2Fvar%2Fwww%2Fmy%20site%3Bprod');
+  assert.strictEqual(config.wpPath, '/var/www/my site;prod');
+});
+
+test('shellEscape - escapes single quotes safely', () => {
+  const escaped = shellEscape("/var/www/O'Reilly site;prod");
+  assert.strictEqual(escaped, "'/var/www/O'\"'\"'Reilly site;prod'");
+});
+
+test('shellEscape - wraps whitespace and shell metacharacters safely', () => {
+  const escaped = shellEscape('/var/www/my site; rm -rf /');
+  assert.strictEqual(escaped, "'/var/www/my site; rm -rf /'");
 });
 
 test('SshErrorType enum values', () => {
