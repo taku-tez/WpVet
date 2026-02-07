@@ -98,6 +98,8 @@ function extractVersion(text: string, patterns: RegExp[]): string | null {
   return null;
 }
 
+const VERSION_PATTERN = '[\\dA-Za-z._-]+';
+
 /**
  * Extract WordPress version from multiple sources
  */
@@ -365,8 +367,8 @@ export async function detectPlugin(
   if (response?.ok) {
     const text = await response.text();
     const version = extractVersion(text, [
-      /Stable tag:\s*([\d.]+)/i,
-      /Version:\s*([\d.]+)/i,
+      new RegExp(`Stable tag:\\s*(${VERSION_PATTERN})`, 'i'),
+      new RegExp(`Version:\\s*(${VERSION_PATTERN})`, 'i'),
     ]);
     
     if (version) {
@@ -435,7 +437,7 @@ export async function detectTheme(
   
   const text = await response.text();
   const version = extractVersion(text, [
-    /Version:\s*([\d.]+)/i,
+    new RegExp(`Version:\\s*(${VERSION_PATTERN})`, 'i'),
   ]);
   
   // Also extract theme name from style.css
