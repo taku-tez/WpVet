@@ -16,7 +16,7 @@ import { parseWpCliInput, wpcliToDetectionResult, parseAndConvert } from './wpcl
 import { scanRemote } from './remote.js';
 import { parseSshUrl, scanViaSsh } from './ssh.js';
 import { format, formatAudit } from './output.js';
-import { initConfig } from './config.js';
+import { initConfig, loadConfig } from './config.js';
 import { runMisconfigChecks, runAudit } from './misconfig.js';
 import { runAllPluginVulnChecks, runPluginVulnChecks } from './plugin-vulns.js';
 
@@ -161,7 +161,7 @@ async function readTargetsFile(path: string): Promise<string[]> {
 }
 
 async function main(): Promise<void> {
-  const { values, positionals } = parseArgs({
+  const { values, positionals, tokens } = parseArgs({
     args: process.argv.slice(2),
     options: {
       format: { type: 'string', short: 'f', default: 'table' },
@@ -182,7 +182,11 @@ async function main(): Promise<void> {
       version: { type: 'boolean', default: false },
     },
     allowPositionals: true,
+    tokens: true,
   });
+
+  const isCliOptionProvided = (optionName: string): boolean =>
+    tokens.some(token => token.kind === 'option' && token.name === optionName);
 
   if (values.version) {
     console.log(`wpvet v${VERSION}`);
@@ -208,15 +212,23 @@ async function main(): Promise<void> {
     }
   }
 
+  const config = loadConfig(values.config);
+
   const options: ScanOptions = {
     ...DEFAULT_OPTIONS,
-    format: (values.format as 'cpe' | 'json' | 'table') || 'table',
-    timeout: parseInt(values.timeout || '30000', 10),
+    format: (values.format as 'cpe' | 'json' | 'table') || DEFAULT_OPTIONS.format,
+    timeout: isCliOptionProvided('timeout')
+      ? parseInt(values.timeout || String(DEFAULT_OPTIONS.timeout), 10)
+      : (config.timeout ?? DEFAULT_OPTIONS.timeout),
     verbose: values.verbose || false,
     stdin: values.stdin || false,
-    userAgent: values['user-agent'] || DEFAULT_OPTIONS.userAgent,
-    concurrency: parseInt(values.concurrency || '5', 10),
-    retry: parseInt(values.retry || '2', 10),
+    userAgent: isCliOptionProvided('user-agent')
+      ? (values['user-agent'] || DEFAULT_OPTIONS.userAgent)
+      : (config.userAgent ?? DEFAULT_OPTIONS.userAgent),
+    concurrency: isCliOptionProvided('concurrency')
+      ? parseInt(values.concurrency || String(DEFAULT_OPTIONS.concurrency), 10)
+      : (config.concurrency ?? DEFAULT_OPTIONS.concurrency),
+    retry: parseInt(values.retry || String(DEFAULT_OPTIONS.retry), 10),
     configPath: values.config,
     fingerprint: values['no-fingerprint'] ? false : (values.fingerprint ?? true),
   };
@@ -228,7 +240,7 @@ async function main(): Promise<void> {
       if (options.stdin) {
         // Read from stdin (WP-CLI JSON)
         const input = await readStdin();
-        const result = parseAndConvert(input, 'stdin');
+        const result = parseAndConvert(input, 'stdin', options.configPath);
         const hasComponents = !!(result.core || result.plugins.length > 0 || result.themes.length > 0);
         results.push({
           output: format(result, options.format),
