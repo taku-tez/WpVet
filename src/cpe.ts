@@ -131,22 +131,54 @@ export function parseCpe(cpe: string): {
   version: string;
   targetSw: string;
 } | null {
-  const match = cpe.match(/^cpe:2\.3:a:([^:]+):([^:]+):([^:]+):[^:]*:[^:]*:[^:]*:[^:]*:([^:]*)/);
-  if (!match) return null;
+  const tokens: string[] = [];
+  let current = '';
+  let escaping = false;
+
+  for (const char of cpe) {
+    if (escaping) {
+      current += `\\${char}`;
+      escaping = false;
+      continue;
+    }
+
+    if (char === '\\') {
+      escaping = true;
+      continue;
+    }
+
+    if (char === ':') {
+      tokens.push(current);
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  if (escaping) {
+    current += '\\';
+  }
+
+  tokens.push(current);
+
+  if (tokens.length < 13 || tokens[0] !== 'cpe' || tokens[1] !== '2.3' || tokens[2] !== 'a') {
+    return null;
+  }
   
   // Unescape values
   const unescape = (s: string) => s
-    .replace(/\\:/g, ':')
+    .replace(/\\\\/g, '\\')
     .replace(/\\"/g, '"')
     .replace(/\\\?/g, '?')
     .replace(/\\\*/g, '*')
-    .replace(/\\\\/g, '\\');
+    .replace(/\\:/g, ':');
   
   return {
-    vendor: unescape(match[1]),
-    product: unescape(match[2]),
-    version: match[3] === '*' ? 'unknown' : unescape(match[3]),
-    targetSw: match[4] || '*',
+    vendor: unescape(tokens[3]),
+    product: unescape(tokens[4]),
+    version: tokens[5] === '*' ? 'unknown' : unescape(tokens[5]),
+    targetSw: tokens[10] || '*',
   };
 }
 

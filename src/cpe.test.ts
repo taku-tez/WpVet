@@ -87,6 +87,22 @@ test('parseCpe - escaped characters', () => {
   assert.strictEqual(parsed?.version, '1.0?beta');
 });
 
+
+test('parseCpe - escaped colons round-trip', () => {
+  const vendor = 'ven:dor';
+  const product = 'pro:duct';
+  const version = '1.2:3';
+  const cpe = `cpe:2.3:a:${vendor.replace(/:/g, '\\:')}:${product.replace(/:/g, '\\:')}:${version.replace(/:/g, '\\:')}:*:*:*:*:wordpress:*:*`;
+  const parsed = parseCpe(cpe);
+
+  assert.deepStrictEqual(parsed, {
+    vendor,
+    product,
+    version,
+    targetSw: 'wordpress',
+  });
+});
+
 test('parseCpe - unknown version (*)', () => {
   const parsed = parseCpe('cpe:2.3:a:wordpress:wordpress:*:*:*:*:*:*:*:*');
   assert.strictEqual(parsed?.version, 'unknown');
