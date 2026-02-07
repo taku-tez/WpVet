@@ -400,7 +400,7 @@ export async function scanViaSsh(
       themes,
     };
     
-    const parsed = wpcliToDetectionResult(combined, result.target);
+    const parsed = wpcliToDetectionResult(combined, result.target, options.configPath);
     
     // Copy site info
     if (Object.keys(siteInfo).length > 0) {

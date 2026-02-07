@@ -160,8 +160,12 @@ export function parseWpCliInput(input: string): ParseResult {
 /**
  * Convert WP-CLI input to detection result
  */
-export function wpcliToDetectionResult(input: WpCliInput, target: string = 'stdin'): DetectionResult {
-  const config = loadConfig();
+export function wpcliToDetectionResult(
+  input: WpCliInput,
+  target: string = 'stdin',
+  configPath?: string
+): DetectionResult {
+  const config = loadConfig(configPath);
   
   const result: DetectionResult = {
     target,
@@ -234,9 +238,13 @@ export function wpcliToDetectionResult(input: WpCliInput, target: string = 'stdi
  * Parse WP-CLI input and convert to detection result
  * Returns errors for partial NDJSON failures
  */
-export function parseAndConvert(input: string, target: string = 'stdin'): DetectionResult {
+export function parseAndConvert(
+  input: string,
+  target: string = 'stdin',
+  configPath?: string
+): DetectionResult {
   const { data, errors } = parseWpCliInput(input);
-  const result = wpcliToDetectionResult(data, target);
+  const result = wpcliToDetectionResult(data, target, configPath);
   
   // Add parse errors
   for (const err of errors) {

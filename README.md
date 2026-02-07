@@ -162,6 +162,14 @@ wpvet init
 
 Config file location: `~/.wpvet/config.json`
 
+Option precedence is:
+
+1. CLI option (highest priority)
+2. Config file value
+3. Built-in default (lowest priority)
+
+Example: `--timeout` is specified on the CLI, that value is used. If `--timeout` is omitted, `timeout` in config is used. If neither is set, the built-in default is used.
+
 ```json
 {
   "additionalPlugins": ["my-custom-plugin"],
