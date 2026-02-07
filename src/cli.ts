@@ -228,7 +228,7 @@ async function main(): Promise<void> {
       if (options.stdin) {
         // Read from stdin (WP-CLI JSON)
         const input = await readStdin();
-        const result = parseAndConvert(input, 'stdin');
+        const result = parseAndConvert(input, 'stdin', options.configPath);
         const hasComponents = !!(result.core || result.plugins.length > 0 || result.themes.length > 0);
         results.push({
           output: format(result, options.format),

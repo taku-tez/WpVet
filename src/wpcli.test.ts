@@ -4,6 +4,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { 
   parsePluginList, 
   parseThemeList, 
@@ -160,4 +163,39 @@ test('wpcliToDetectionResult - handles missing optional fields', () => {
   assert.strictEqual(result.plugins.length, 1);
   assert.strictEqual(result.themes.length, 0);
   assert.strictEqual(result.site, undefined);
+});
+
+
+test('wpcliToDetectionResult - respects configPath vendor override', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wpvet-test-'));
+  const configPath = join(dir, 'config.json');
+  writeFileSync(configPath, JSON.stringify({ pluginVendors: { akismet: 'custom-vendor' } }));
+
+  try {
+    const input = {
+      plugins: [{ name: 'akismet', slug: 'akismet', version: '5.0', status: 'active' as const }],
+    };
+
+    const result = wpcliToDetectionResult(input, 'stdin', configPath);
+    assert.ok(result.plugins[0].cpe.includes(':custom-vendor:'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('parseAndConvert - respects configPath vendor override', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wpvet-test-'));
+  const configPath = join(dir, 'config.json');
+  writeFileSync(configPath, JSON.stringify({ pluginVendors: { jetpack: 'vendor-from-config' } }));
+
+  try {
+    const input = JSON.stringify([
+      { name: 'jetpack', version: '12.0', status: 'active' },
+    ]);
+
+    const result = parseAndConvert(input, 'stdin', configPath);
+    assert.ok(result.plugins[0].cpe.includes(':vendor-from-config:'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

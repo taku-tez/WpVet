@@ -9,7 +9,7 @@
 
 import type { WpCliInput, WpPlugin, WpTheme, DetectedComponent, DetectionResult, SiteInfo } from './types.js';
 import { generateCoreCpe, generatePluginCpe, generateThemeCpe } from './cpe.js';
-import { loadConfig, getPluginVendor } from './config.js';
+import { loadConfig, getPluginVendor, type WpVetConfig } from './config.js';
 
 interface ParseError {
   line: number;
@@ -160,8 +160,13 @@ export function parseWpCliInput(input: string): ParseResult {
 /**
  * Convert WP-CLI input to detection result
  */
-export function wpcliToDetectionResult(input: WpCliInput, target: string = 'stdin'): DetectionResult {
-  const config = loadConfig();
+export function wpcliToDetectionResult(
+  input: WpCliInput,
+  target: string = 'stdin',
+  configPath?: string,
+  config?: WpVetConfig,
+): DetectionResult {
+  const resolvedConfig = config ?? loadConfig(configPath);
   
   const result: DetectionResult = {
     target,
@@ -196,7 +201,7 @@ export function wpcliToDetectionResult(input: WpCliInput, target: string = 'stdi
   
   // Process plugins
   for (const plugin of input.plugins || []) {
-    const vendor = getPluginVendor(plugin.slug, config);
+    const vendor = getPluginVendor(plugin.slug, resolvedConfig);
     result.plugins.push({
       type: 'plugin',
       slug: plugin.slug,
@@ -234,9 +239,14 @@ export function wpcliToDetectionResult(input: WpCliInput, target: string = 'stdi
  * Parse WP-CLI input and convert to detection result
  * Returns errors for partial NDJSON failures
  */
-export function parseAndConvert(input: string, target: string = 'stdin'): DetectionResult {
+export function parseAndConvert(
+  input: string,
+  target: string = 'stdin',
+  configPath?: string,
+  config?: WpVetConfig,
+): DetectionResult {
   const { data, errors } = parseWpCliInput(input);
-  const result = wpcliToDetectionResult(data, target);
+  const result = wpcliToDetectionResult(data, target, configPath, config);
   
   // Add parse errors
   for (const err of errors) {
