@@ -58,6 +58,17 @@ export class SshError extends Error {
 }
 
 /**
+ * Escape a value for safe POSIX shell single-quoted usage.
+ */
+export function shellEscape(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
+function buildWpCliCommand(wpPath: string, wpCli: string, command: string): string {
+  return `cd ${shellEscape(wpPath)} && ${shellEscape(wpCli)} ${command}`;
+}
+
+/**
  * Parse SSH URL with query parameters: ssh://user@host:port/path?wp-cli=/path&path=/override
  */
 export function parseSshUrl(url: string): SshConfig {
@@ -222,7 +233,7 @@ async function findWpCli(
   config: SshConfig,
   timeout: number
 ): Promise<string> {
-  const paths = ['wp', '/usr/local/bin/wp', '/usr/bin/wp', '~/.local/bin/wp', '~/.wp-cli/bin/wp'];
+  const paths = ['wp', '/usr/local/bin/wp', '/usr/bin/wp'];
   
   if (config.wpCli) {
     paths.unshift(config.wpCli);
@@ -230,7 +241,7 @@ async function findWpCli(
   
   for (const path of paths) {
     try {
-      await sshExec(config, `${path} --version 2>/dev/null`, timeout);
+      await sshExec(config, `${shellEscape(path)} --version 2>/dev/null`, timeout);
       return path;
     } catch {
       continue;
@@ -263,7 +274,7 @@ async function findWpPath(
   if (config.wpPath && config.wpPath !== '/var/www/html') {
     // Verify it's a valid WordPress installation
     try {
-      await sshExec(config, `cd ${config.wpPath} && ${wpCli} core version 2>/dev/null`, timeout);
+      await sshExec(config, buildWpCliCommand(config.wpPath, wpCli, 'core version 2>/dev/null'), timeout);
       return config.wpPath;
     } catch {
       // Continue to auto-detect
@@ -282,7 +293,7 @@ async function findWpPath(
       
       for (const path of expandedPaths.trim().split('\n').filter(Boolean)) {
         try {
-          await sshExec(config, `cd ${path} && ${wpCli} core version 2>/dev/null`, timeout);
+          await sshExec(config, buildWpCliCommand(path, wpCli, 'core version 2>/dev/null'), timeout);
           return path;
         } catch {
           continue;
@@ -332,7 +343,7 @@ export async function scanViaSsh(
     // Get core version
     const coreVersion = (await sshExec(
       config,
-      `cd ${wpPath} && ${wpCli} core version 2>/dev/null`,
+      buildWpCliCommand(wpPath, wpCli, 'core version 2>/dev/null'),
       options.timeout
     )).trim();
     
@@ -341,17 +352,17 @@ export async function scanViaSsh(
     try {
       const siteJson = await sshExec(
         config,
-        `cd ${wpPath} && ${wpCli} option get siteurl --format=json 2>/dev/null`,
+        buildWpCliCommand(wpPath, wpCli, 'option get siteurl --format=json 2>/dev/null'),
         options.timeout
       );
       const homeJson = await sshExec(
         config,
-        `cd ${wpPath} && ${wpCli} option get home --format=json 2>/dev/null`,
+        buildWpCliCommand(wpPath, wpCli, 'option get home --format=json 2>/dev/null'),
         options.timeout
       );
       const multisiteJson = await sshExec(
         config,
-        `cd ${wpPath} && ${wpCli} config get MULTISITE --format=json 2>/dev/null || echo "false"`,
+        buildWpCliCommand(wpPath, wpCli, 'config get MULTISITE --format=json 2>/dev/null || echo "false"'),
         options.timeout
       );
       
@@ -367,14 +378,14 @@ export async function scanViaSsh(
     // Get plugins
     const pluginJson = await sshExec(
       config,
-      `cd ${wpPath} && ${wpCli} plugin list --format=json 2>/dev/null`,
+      buildWpCliCommand(wpPath, wpCli, 'plugin list --format=json 2>/dev/null'),
       options.timeout
     );
     
     // Get themes
     const themeJson = await sshExec(
       config,
-      `cd ${wpPath} && ${wpCli} theme list --format=json 2>/dev/null`,
+      buildWpCliCommand(wpPath, wpCli, 'theme list --format=json 2>/dev/null'),
       options.timeout
     );
     
