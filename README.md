@@ -1,5 +1,8 @@
 # WpVet v0.4.0
 
+[![npm version](https://img.shields.io/npm/v/wpvet)](https://www.npmjs.com/package/wpvet)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 WordPress plugin/theme security scanner with CPE output for vulnerability correlation.
 
 ## Features
@@ -12,6 +15,12 @@ WordPress plugin/theme security scanner with CPE output for vulnerability correl
 - **Multiple Output Formats**: CPE, JSON, table
 - **Configurable**: Custom plugin/theme lists via config file
 - **Concurrent Scanning**: Configurable concurrency with retry support
+
+## Quick Start
+
+```bash
+npx wpvet --help
+```
 
 ## Installation
 
@@ -330,6 +339,10 @@ For vulnerability correlation:
 ```bash
 wpvet detect https://example.com -f cpe | grep -f - cve-database.txt
 ```
+
+## Part of xxVet Series
+
+xxVet is a collection of 15 focused security CLI tools. See [full catalog](https://www.notion.so/xxVet-CLI-304b1e6bcbc2817abe62d4aecee9914a).
 
 ## License
 
